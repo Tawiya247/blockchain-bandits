@@ -68,6 +68,13 @@ npm run sprint1:check
 
 Le script lance 3 noeuds locaux (`7777`, `7778`, `7779`) et valide que chaque noeud decouvre les 2 autres.
 
+## Commandes secure (Sprint 2)
+
+```powershell
+node src/cli/archipel.mjs secure-listen --node-name bob --port 8802
+node src/cli/archipel.mjs secure-send --node-name alice --to-host 127.0.0.1 --to-port 8802 --message Bonjour
+```
+
 ## Livrables Sprint 2
 
 - Handshake authentifie sans CA (mode Noise-like): `HELLO -> HELLO_REPLY -> AUTH -> AUTH_OK`

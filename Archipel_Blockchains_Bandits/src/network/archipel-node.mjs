@@ -26,6 +26,7 @@ export class ArchipelNode {
     this.tcpServer = null;
     this.helloTimer = null;
     this.pruneTimer = null;
+    this.flushTimer = null;
     this.pingTimer = null;
     this.printTimer = null;
   }
@@ -39,16 +40,22 @@ export class ArchipelNode {
     this.startTcpServer();
     this.startUdpDiscovery();
     this.pruneTimer = setInterval(() => this.peerTable.prune(this.peerTimeoutMs), 5000);
+    this.flushTimer = setInterval(() => this.peerTable.save(), 5000);
     this.pingTimer = setInterval(() => this.broadcastPing(), this.keepAliveMs);
     this.printTimer = setInterval(() => this.printPeerTable(), 10000);
+    if ((process.env.ARCHIPEL_DISCOVERY_HMAC_KEY ?? "").length === 0) {
+      this.log("WARN empty ARCHIPEL_DISCOVERY_HMAC_KEY");
+    }
   }
 
   stop() {
     clearInterval(this.helloTimer);
     clearInterval(this.pruneTimer);
+    clearInterval(this.flushTimer);
     clearInterval(this.pingTimer);
     clearInterval(this.printTimer);
     for (const s of this.tcpSockets) s.destroy();
+    this.peerTable.save({ force: true });
     if (this.tcpServer) this.tcpServer.close();
     if (this.udpSocket) this.udpSocket.close();
   }

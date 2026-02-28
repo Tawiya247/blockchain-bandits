@@ -24,6 +24,7 @@ const FT = {
   AUTH_OK: 0x13,
   SECURE_MSG: 0x14,
 };
+const HANDSHAKE_MAX_SKEW_MS = Number(process.env.ARCHIPEL_HANDSHAKE_MAX_SKEW_MS ?? "120000");
 
 function waitForFrame(socketState, type, timeoutMs = 5000) {
   return new Promise((resolvePromise, rejectPromise) => {
@@ -66,8 +67,15 @@ function transcriptHash(helloPayload, helloReplyPayload) {
     b: helloReplyPayload.node_id,
     e_a: helloPayload.eph_pub_pem,
     e_b: helloReplyPayload.eph_pub_pem,
+    t_a: helloPayload.timestamp ?? 0,
+    t_b: helloReplyPayload.timestamp ?? 0,
   });
   return createHash("sha256").update(raw, "utf8").digest();
+}
+
+function isFreshTimestamp(ts, maxSkewMs = HANDSHAKE_MAX_SKEW_MS) {
+  if (typeof ts !== "number" || Number.isNaN(ts)) return false;
+  return Math.abs(Date.now() - ts) <= maxSkewMs;
 }
 
 function deriveSessionKey(sharedSecret) {
@@ -144,20 +152,27 @@ export class SecureNode extends EventEmitter {
   async responderHandshake(socket, socketState) {
     const hello = await waitForFrame(socketState, FT.HELLO);
     const helloP = hello.payload;
+    if (!isFreshTimestamp(helloP.timestamp)) {
+      throw new Error("stale or invalid HELLO timestamp");
+    }
 
     const trust = this.trustStore.verifyOrTrust(helloP.node_id, helloP.identity_pub_pem);
     if (!trust.trusted) throw new Error(trust.reason);
 
     const ephB = generateKeyPairSync("x25519");
     const ephBPubPem = ephB.publicKey.export({ type: "spki", format: "pem" });
-    const th = transcriptHash(helloP, { node_id: this.identity.nodeId, eph_pub_pem: ephBPubPem });
+    const replyPayload = {
+      node_id: this.identity.nodeId,
+      identity_pub_pem: this.identity.publicPem,
+      eph_pub_pem: ephBPubPem,
+      timestamp: Date.now(),
+    };
+    const th = transcriptHash(helloP, replyPayload);
     const sigB = sign(null, th, this.identity.privateKey).toString("base64");
 
     socket.write(
       encodeFrame(FT.HELLO_REPLY, {
-        node_id: this.identity.nodeId,
-        identity_pub_pem: this.identity.publicPem,
-        eph_pub_pem: ephBPubPem,
+        ...replyPayload,
         sig_b: sigB,
       })
     );
@@ -211,28 +226,22 @@ export class SecureNode extends EventEmitter {
     const ephA = generateKeyPairSync("x25519");
     const ephAPubPem = ephA.publicKey.export({ type: "spki", format: "pem" });
 
-    socket.write(
-      encodeFrame(FT.HELLO, {
-        node_id: this.identity.nodeId,
-        identity_pub_pem: this.identity.publicPem,
-        eph_pub_pem: ephAPubPem,
-        timestamp: Date.now(),
-      })
-    );
+    const helloPayload = {
+      node_id: this.identity.nodeId,
+      identity_pub_pem: this.identity.publicPem,
+      eph_pub_pem: ephAPubPem,
+      timestamp: Date.now(),
+    };
+    socket.write(encodeFrame(FT.HELLO, helloPayload));
 
     const helloReply = await waitForFrame(socketState, FT.HELLO_REPLY);
     const p = helloReply.payload;
+    if (!isFreshTimestamp(p.timestamp)) throw new Error("stale or invalid HELLO_REPLY timestamp");
 
     const trust = this.trustStore.verifyOrTrust(p.node_id, p.identity_pub_pem);
     if (!trust.trusted) throw new Error(trust.reason);
 
-    const th = transcriptHash(
-      {
-        node_id: this.identity.nodeId,
-        eph_pub_pem: ephAPubPem,
-      },
-      p
-    );
+    const th = transcriptHash(helloPayload, p);
     const okSigB = verify(null, th, createPublicKey(p.identity_pub_pem), Buffer.from(p.sig_b, "base64"));
     if (!okSigB) throw new Error("HELLO_REPLY signature invalid");
 

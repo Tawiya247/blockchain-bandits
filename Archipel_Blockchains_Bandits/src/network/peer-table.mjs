@@ -5,6 +5,7 @@ export class PeerTable {
   constructor(filePath) {
     this.filePath = filePath;
     this.map = new Map();
+    this.dirty = false;
     this.load();
   }
 
@@ -13,14 +14,18 @@ export class PeerTable {
       const raw = readFileSync(this.filePath, "utf8");
       const arr = JSON.parse(raw);
       this.map = new Map(arr.map((p) => [p.node_id, p]));
+      this.dirty = false;
     } catch {
       this.map = new Map();
+      this.dirty = false;
     }
   }
 
-  save() {
+  save({ force = false } = {}) {
+    if (!force && !this.dirty) return;
     mkdirSync(dirname(this.filePath), { recursive: true });
     writeFileSync(this.filePath, JSON.stringify([...this.map.values()], null, 2), "utf8");
+    this.dirty = false;
   }
 
   upsert(peer) {
@@ -33,7 +38,7 @@ export class PeerTable {
       shared_files: existing?.shared_files ?? [],
       reputation: existing?.reputation ?? 1,
     });
-    this.save();
+    this.dirty = true;
   }
 
   merge(peers) {
@@ -43,9 +48,11 @@ export class PeerTable {
   prune(timeoutMs) {
     const now = Date.now();
     for (const [nodeId, peer] of this.map) {
-      if (now - peer.last_seen > timeoutMs) this.map.delete(nodeId);
+      if (now - peer.last_seen > timeoutMs) {
+        this.map.delete(nodeId);
+        this.dirty = true;
+      }
     }
-    this.save();
   }
 
   list() {

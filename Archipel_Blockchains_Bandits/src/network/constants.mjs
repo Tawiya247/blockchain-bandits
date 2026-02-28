@@ -10,4 +10,5 @@ export const TCP_FRAME_TYPE = {
 };
 
 export const MAGIC = Buffer.from("ARCP", "ascii");
-export const HMAC_KEY = "archipel-sprint1";
+export const HMAC_KEY =
+  process.env.ARCHIPEL_DISCOVERY_HMAC_KEY ?? "archipel-dev-key-change-in-production";
